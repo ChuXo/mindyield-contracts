@@ -1,0 +1,583 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../../src/ContestFactory.sol";
+import "../../src/Contest.sol";
+import "../../src/RandomnessManager.sol";
+import "../../src/mocks/MockERC20.sol";
+import "../../src/mocks/MockYieldVault.sol";
+
+/**
+ * @title GasBenchmark
+ * @notice Gas consumption benchmarks for MindYield operations
+ * @dev Use `forge snapshot` to track gas usage over time
+ *
+ * Run benchmarks:
+ *   forge test --match-contract GasBenchmark --gas-report
+ *   forge snapshot --match-contract GasBenchmark
+ *
+ * Compare snapshots:
+ *   forge snapshot --diff
+ *   forge snapshot --check
+ */
+contract GasBenchmark is Test {
+    ContestFactory public factory;
+    RandomnessManager public randomness;
+    MockERC20 public token;
+    MockYieldVault public vault;
+
+    address public alice = address(0x1);
+    address public bob = address(0x2);
+    address public charlie = address(0x3);
+
+    uint256 public constant DEPOSIT_AMOUNT = 10e18;
+    uint40 public depositEnd;
+    uint40 public lockEnd;
+    uint40 public revealEnd;
+
+    function setUp() public {
+        // Deploy core contracts
+        token = new MockERC20("USD Coin", "USDC", 18);
+        vault = new MockYieldVault(address(token));
+        randomness = new RandomnessManager();
+
+        // Deploy factory
+        factory = new ContestFactory(
+            address(randomness),
+            address(this) // protocol fee recipient
+        );
+
+        // Setup times
+        depositEnd = uint40(block.timestamp + 1 days);
+        lockEnd = uint40(block.timestamp + 2 days);
+        revealEnd = uint40(block.timestamp + 3 days);
+
+        // Mint tokens to participants
+        token.mint(alice, 1000e18);
+        token.mint(bob, 1000e18);
+        token.mint(charlie, 1000e18);
+
+        // Approve factory
+        vm.prank(alice);
+        token.approve(address(factory), type(uint256).max);
+        vm.prank(bob);
+        token.approve(address(factory), type(uint256).max);
+        vm.prank(charlie);
+        token.approve(address(factory), type(uint256).max);
+    }
+
+    // ============ FACTORY BENCHMARKS ============
+
+    function testGas_FactoryCreateContest_Vote() public {
+        bytes32[] memory options = new bytes32[](3);
+        options[0] = keccak256("Option A");
+        options[1] = keccak256("Option B");
+        options[2] = keccak256("Option C");
+
+        ContestFactory.ContestConfig memory config = ContestFactory.ContestConfig({
+            depositToken: address(token),
+            depositAmount: DEPOSIT_AMOUNT,
+            depositEnd: depositEnd,
+            lockEnd: lockEnd,
+            revealEnd: revealEnd,
+            contestType: ContestFactory.ContestType.VOTE,
+            tierRequired: 0,
+            yieldStrategyId: keccak256("aave-v3"),
+            prizeModel: ContestFactory.PrizeModel.SINGLE_WINNER,
+            prizeModelParam: 1,
+            metadataHash: keccak256("ipfs://QmTest")
+        });
+
+        factory.createContest(config, options);
+    }
+
+    function testGas_FactoryCreateContest_Rank() public {
+        bytes32[] memory options = new bytes32[](5);
+        for (uint i = 0; i < 5; i++) {
+            options[i] = keccak256(abi.encodePacked("Option", i));
+        }
+
+        ContestFactory.ContestConfig memory config = ContestFactory.ContestConfig({
+            depositToken: address(token),
+            depositAmount: DEPOSIT_AMOUNT,
+            depositEnd: depositEnd,
+            lockEnd: lockEnd,
+            revealEnd: revealEnd,
+            contestType: ContestFactory.ContestType.RANK,
+            tierRequired: 0,
+            yieldStrategyId: keccak256("aave-v3"),
+            prizeModel: ContestFactory.PrizeModel.TOP_N,
+            prizeModelParam: 3,
+            metadataHash: keccak256("ipfs://QmTest")
+        });
+
+        factory.createContest(config, options);
+    }
+
+    function testGas_FactoryCreateContest_WithTier() public {
+        bytes32[] memory options = new bytes32[](2);
+        options[0] = keccak256("Yes");
+        options[1] = keccak256("No");
+
+        ContestFactory.ContestConfig memory config = ContestFactory.ContestConfig({
+            depositToken: address(token),
+            depositAmount: DEPOSIT_AMOUNT,
+            depositEnd: depositEnd,
+            lockEnd: lockEnd,
+            revealEnd: revealEnd,
+            contestType: ContestFactory.ContestType.VOTE,
+            tierRequired: 2, // Requires tier 2 verification
+            yieldStrategyId: keccak256("aave-v3"),
+            prizeModel: ContestFactory.PrizeModel.SINGLE_WINNER,
+            prizeModelParam: 1,
+            metadataHash: keccak256("ipfs://QmTest")
+        });
+
+        factory.createContest(config, options);
+    }
+
+    // ============ DEPOSIT BENCHMARKS ============
+
+    function testGas_Deposit_First() public {
+        Contest contest = _createVoteContest();
+
+        vm.prank(alice);
+        token.approve(address(contest), DEPOSIT_AMOUNT);
+
+        vm.prank(alice);
+        contest.deposit();
+    }
+
+    function testGas_Deposit_Subsequent() public {
+        Contest contest = _createVoteContest();
+
+        // First deposit (Alice)
+        vm.prank(alice);
+        token.approve(address(contest), DEPOSIT_AMOUNT);
+        vm.prank(alice);
+        contest.deposit();
+
+        // Second deposit (Bob) - measure this one
+        vm.prank(bob);
+        token.approve(address(contest), DEPOSIT_AMOUNT);
+
+        vm.prank(bob);
+        contest.deposit();
+    }
+
+    function testGas_Deposit_10th() public {
+        Contest contest = _createVoteContest();
+
+        // Add 9 deposits
+        for (uint i = 0; i < 9; i++) {
+            address participant = address(uint160(0x1000 + i));
+            token.mint(participant, DEPOSIT_AMOUNT);
+            vm.prank(participant);
+            token.approve(address(contest), DEPOSIT_AMOUNT);
+            vm.prank(participant);
+            contest.deposit();
+        }
+
+        // 10th deposit - measure this one
+        vm.prank(alice);
+        token.approve(address(contest), DEPOSIT_AMOUNT);
+
+        vm.prank(alice);
+        contest.deposit();
+    }
+
+    function testGas_Deposit_100th() public {
+        Contest contest = _createVoteContest();
+
+        // Add 99 deposits
+        for (uint i = 0; i < 99; i++) {
+            address participant = address(uint160(0x1000 + i));
+            token.mint(participant, DEPOSIT_AMOUNT);
+            vm.prank(participant);
+            token.approve(address(contest), DEPOSIT_AMOUNT);
+            vm.prank(participant);
+            contest.deposit();
+        }
+
+        // 100th deposit - measure this one
+        vm.prank(alice);
+        token.approve(address(contest), DEPOSIT_AMOUNT);
+
+        vm.prank(alice);
+        contest.deposit();
+    }
+
+    // ============ COMMIT BENCHMARKS ============
+
+    function testGas_CommitVote_First() public {
+        Contest contest = _createVoteContest();
+        _depositAs(contest, alice);
+
+        vm.warp(depositEnd + 1);
+
+        bytes32 commitHash = keccak256(abi.encodePacked("alice-vote", "salt"));
+
+        vm.prank(alice);
+        contest.commitVote(commitHash);
+    }
+
+    function testGas_CommitVote_10th() public {
+        Contest contest = _createVoteContest();
+
+        // Add 9 commits
+        for (uint i = 0; i < 9; i++) {
+            address participant = address(uint160(0x1000 + i));
+            _depositAs(contest, participant);
+        }
+
+        _depositAs(contest, alice);
+        vm.warp(depositEnd + 1);
+
+        // 9 commits
+        for (uint i = 0; i < 9; i++) {
+            address participant = address(uint160(0x1000 + i));
+            bytes32 commitHash = keccak256(abi.encodePacked(participant, "salt"));
+            vm.prank(participant);
+            contest.commitVote(commitHash);
+        }
+
+        // 10th commit - measure this one
+        bytes32 aliceCommit = keccak256(abi.encodePacked("alice-vote", "salt"));
+
+        vm.prank(alice);
+        contest.commitVote(aliceCommit);
+    }
+
+    // ============ REVEAL BENCHMARKS ============
+
+    function testGas_RevealVote_Vote() public {
+        Contest contest = _createVoteContest();
+        _depositAs(contest, alice);
+
+        vm.warp(depositEnd + 1);
+
+        bytes memory voteData = abi.encode(uint8(0)); // Option 0
+        bytes32 salt = keccak256("alice-salt");
+        bytes32 commitHash = keccak256(abi.encodePacked(voteData, salt));
+
+        vm.prank(alice);
+        contest.commitVote(commitHash);
+
+        vm.warp(lockEnd + 1);
+
+        vm.prank(alice);
+        contest.revealVote(voteData, salt);
+    }
+
+    function testGas_RevealVote_Rank() public {
+        Contest contest = _createRankContest();
+        _depositAs(contest, alice);
+
+        vm.warp(depositEnd + 1);
+
+        uint8[] memory ranking = new uint8[](3);
+        ranking[0] = 2;
+        ranking[1] = 0;
+        ranking[2] = 1;
+        bytes memory voteData = abi.encode(ranking);
+        bytes32 salt = keccak256("alice-salt");
+        bytes32 commitHash = keccak256(abi.encodePacked(voteData, salt));
+
+        vm.prank(alice);
+        contest.commitVote(commitHash);
+
+        vm.warp(lockEnd + 1);
+
+        vm.prank(alice);
+        contest.revealVote(voteData, salt);
+    }
+
+    function testGas_RevealVote_Rate() public {
+        Contest contest = _createRateContest();
+        _depositAs(contest, alice);
+
+        vm.warp(depositEnd + 1);
+
+        uint8[] memory ratings = new uint8[](3);
+        ratings[0] = 5;
+        ratings[1] = 3;
+        ratings[2] = 4;
+        bytes memory voteData = abi.encode(ratings);
+        bytes32 salt = keccak256("alice-salt");
+        bytes32 commitHash = keccak256(abi.encodePacked(voteData, salt));
+
+        vm.prank(alice);
+        contest.commitVote(commitHash);
+
+        vm.warp(lockEnd + 1);
+
+        vm.prank(alice);
+        contest.revealVote(voteData, salt);
+    }
+
+    // ============ FINALIZATION BENCHMARKS ============
+
+    function testGas_Finalize_Vote_3Participants() public {
+        Contest contest = _createVoteContest();
+
+        _depositAs(contest, alice);
+        _depositAs(contest, bob);
+        _depositAs(contest, charlie);
+
+        vm.warp(depositEnd + 1);
+
+        // Commits
+        _commitVoteAs(contest, alice, 0);
+        _commitVoteAs(contest, bob, 1);
+        _commitVoteAs(contest, charlie, 0);
+
+        vm.warp(lockEnd + 1);
+
+        // Reveals
+        _revealVoteAs(contest, alice, 0);
+        _revealVoteAs(contest, bob, 1);
+        _revealVoteAs(contest, charlie, 0);
+
+        vm.warp(revealEnd + 1);
+
+        contest.finalizeContest();
+    }
+
+    function testGas_Finalize_Vote_10Participants() public {
+        Contest contest = _createVoteContest();
+
+        address[] memory participants = new address[](10);
+        for (uint i = 0; i < 10; i++) {
+            participants[i] = address(uint160(0x1000 + i));
+            _depositAs(contest, participants[i]);
+        }
+
+        vm.warp(depositEnd + 1);
+
+        // All vote for option 0
+        for (uint i = 0; i < 10; i++) {
+            _commitVoteAs(contest, participants[i], 0);
+        }
+
+        vm.warp(lockEnd + 1);
+
+        for (uint i = 0; i < 10; i++) {
+            _revealVoteAs(contest, participants[i], 0);
+        }
+
+        vm.warp(revealEnd + 1);
+
+        contest.finalizeContest();
+    }
+
+    function testGas_Finalize_Vote_50Participants() public {
+        Contest contest = _createVoteContest();
+
+        address[] memory participants = new address[](50);
+        for (uint i = 0; i < 50; i++) {
+            participants[i] = address(uint160(0x1000 + i));
+            _depositAs(contest, participants[i]);
+        }
+
+        vm.warp(depositEnd + 1);
+
+        for (uint i = 0; i < 50; i++) {
+            _commitVoteAs(contest, participants[i], uint8(i % 3));
+        }
+
+        vm.warp(lockEnd + 1);
+
+        for (uint i = 0; i < 50; i++) {
+            _revealVoteAs(contest, participants[i], uint8(i % 3));
+        }
+
+        vm.warp(revealEnd + 1);
+
+        contest.finalizeContest();
+    }
+
+    function testGas_Finalize_Rank_10Participants() public {
+        Contest contest = _createRankContest();
+
+        address[] memory participants = new address[](10);
+        for (uint i = 0; i < 10; i++) {
+            participants[i] = address(uint160(0x1000 + i));
+            _depositAs(contest, participants[i]);
+        }
+
+        vm.warp(depositEnd + 1);
+
+        for (uint i = 0; i < 10; i++) {
+            _commitRankAs(contest, participants[i]);
+        }
+
+        vm.warp(lockEnd + 1);
+
+        for (uint i = 0; i < 10; i++) {
+            _revealRankAs(contest, participants[i]);
+        }
+
+        vm.warp(revealEnd + 1);
+
+        contest.finalizeContest();
+    }
+
+    // ============ WITHDRAWAL BENCHMARKS ============
+
+    function testGas_WithdrawPrincipal() public {
+        Contest contest = _createVoteContest();
+        _depositAs(contest, alice);
+
+        vm.warp(revealEnd + 1);
+
+        vm.prank(alice);
+        contest.withdrawPrincipal();
+    }
+
+    function testGas_WithdrawYield_Winner() public {
+        Contest contest = _createVoteContest();
+
+        _depositAs(contest, alice);
+        _depositAs(contest, bob);
+
+        vm.warp(depositEnd + 1);
+        _commitVoteAs(contest, alice, 0);
+        _commitVoteAs(contest, bob, 1);
+
+        vm.warp(lockEnd + 1);
+        _revealVoteAs(contest, alice, 0);
+        _revealVoteAs(contest, bob, 1);
+
+        vm.warp(revealEnd + 1);
+        contest.finalizeContest();
+
+        // Assume alice won, withdraw yield
+        vm.prank(alice);
+        contest.withdrawPrincipal();
+    }
+
+    // ============ HELPER FUNCTIONS ============
+
+    function _createVoteContest() internal returns (Contest) {
+        bytes32[] memory options = new bytes32[](3);
+        options[0] = keccak256("Option A");
+        options[1] = keccak256("Option B");
+        options[2] = keccak256("Option C");
+
+        ContestFactory.ContestConfig memory config = ContestFactory.ContestConfig({
+            depositToken: address(token),
+            depositAmount: DEPOSIT_AMOUNT,
+            depositEnd: depositEnd,
+            lockEnd: lockEnd,
+            revealEnd: revealEnd,
+            contestType: ContestFactory.ContestType.VOTE,
+            tierRequired: 0,
+            yieldStrategyId: keccak256("aave-v3"),
+            prizeModel: ContestFactory.PrizeModel.SINGLE_WINNER,
+            prizeModelParam: 1,
+            metadataHash: keccak256("ipfs://QmTest")
+        });
+
+        address contestAddr = factory.createContest(config, options);
+        return Contest(payable(contestAddr));
+    }
+
+    function _createRankContest() internal returns (Contest) {
+        bytes32[] memory options = new bytes32[](3);
+        options[0] = keccak256("Option A");
+        options[1] = keccak256("Option B");
+        options[2] = keccak256("Option C");
+
+        ContestFactory.ContestConfig memory config = ContestFactory.ContestConfig({
+            depositToken: address(token),
+            depositAmount: DEPOSIT_AMOUNT,
+            depositEnd: depositEnd,
+            lockEnd: lockEnd,
+            revealEnd: revealEnd,
+            contestType: ContestFactory.ContestType.RANK,
+            tierRequired: 0,
+            yieldStrategyId: keccak256("aave-v3"),
+            prizeModel: ContestFactory.PrizeModel.TOP_N,
+            prizeModelParam: 3,
+            metadataHash: keccak256("ipfs://QmTest")
+        });
+
+        address contestAddr = factory.createContest(config, options);
+        return Contest(payable(contestAddr));
+    }
+
+    function _createRateContest() internal returns (Contest) {
+        bytes32[] memory options = new bytes32[](3);
+        options[0] = keccak256("Option A");
+        options[1] = keccak256("Option B");
+        options[2] = keccak256("Option C");
+
+        ContestFactory.ContestConfig memory config = ContestFactory.ContestConfig({
+            depositToken: address(token),
+            depositAmount: DEPOSIT_AMOUNT,
+            depositEnd: depositEnd,
+            lockEnd: lockEnd,
+            revealEnd: revealEnd,
+            contestType: ContestFactory.ContestType.RATE,
+            tierRequired: 0,
+            yieldStrategyId: keccak256("aave-v3"),
+            prizeModel: ContestFactory.PrizeModel.PROPORTIONAL,
+            prizeModelParam: 1,
+            metadataHash: keccak256("ipfs://QmTest")
+        });
+
+        address contestAddr = factory.createContest(config, options);
+        return Contest(payable(contestAddr));
+    }
+
+    function _depositAs(Contest contest, address participant) internal {
+        token.mint(participant, DEPOSIT_AMOUNT);
+        vm.prank(participant);
+        token.approve(address(contest), DEPOSIT_AMOUNT);
+        vm.prank(participant);
+        contest.deposit();
+    }
+
+    function _commitVoteAs(Contest contest, address participant, uint8 option) internal {
+        bytes memory voteData = abi.encode(option);
+        bytes32 salt = keccak256(abi.encodePacked(participant, "salt"));
+        bytes32 commitHash = keccak256(abi.encodePacked(voteData, salt));
+
+        vm.prank(participant);
+        contest.commitVote(commitHash);
+    }
+
+    function _revealVoteAs(Contest contest, address participant, uint8 option) internal {
+        bytes memory voteData = abi.encode(option);
+        bytes32 salt = keccak256(abi.encodePacked(participant, "salt"));
+
+        vm.prank(participant);
+        contest.revealVote(voteData, salt);
+    }
+
+    function _commitRankAs(Contest contest, address participant) internal {
+        uint8[] memory ranking = new uint8[](3);
+        ranking[0] = 0;
+        ranking[1] = 1;
+        ranking[2] = 2;
+        bytes memory voteData = abi.encode(ranking);
+        bytes32 salt = keccak256(abi.encodePacked(participant, "salt"));
+        bytes32 commitHash = keccak256(abi.encodePacked(voteData, salt));
+
+        vm.prank(participant);
+        contest.commitVote(commitHash);
+    }
+
+    function _revealRankAs(Contest contest, address participant) internal {
+        uint8[] memory ranking = new uint8[](3);
+        ranking[0] = 0;
+        ranking[1] = 1;
+        ranking[2] = 2;
+        bytes memory voteData = abi.encode(ranking);
+        bytes32 salt = keccak256(abi.encodePacked(participant, "salt"));
+
+        vm.prank(participant);
+        contest.revealVote(voteData, salt);
+    }
+}
