@@ -21,35 +21,37 @@ always returned, only DeFi-generated yield is distributed.
 | Contract | Address |
 |---|---|
 | AutoYieldVault (USDC) | `0x20bCBDA9755512d46802174668b34DbC6f357a40` |
-| YieldOptimizer | `0xc62CACA6402A1c698aCf4f9D1F4E8Cd7D4Ae50F5` |
+| YieldOptimizer (proxy) | `0xc62CACA6402A1c698aCf4f9D1F4E8Cd7D4Ae50F5` |
 | Timelock (48h) | `0x03DA5EEdDCf6364Aaa20dc07c51687a9591d9d53` |
 | Guardian | `0x807AE17d48699861e678259d391255f68Fe176a5` |
+| YieldVault | `0x23fc0080f54d7c20b51e260a96ef3f31d5768176` |
 | ContestFactoryV2 | `0x6e8fb429a6cf76d526e94bdf14e71eb6a54586a4` |
 | ContestV2 (clone implementation) | `0x6C6B8Ce1b372407BE7bf1b43d5B12d9e256d7F9A` |
-| ProbabilityVaultFactory | `0xB2af26B889618a4Dd2A8c608c05D7f09d7492b7a` |
+| NoLossLotteryFactory | `0x9fe85fc51ec7f90f3c1e5a1d747a66a13c354239` |
+| NoLossLotteryV3 (clone implementation) | `0xdefe76a5542955e75d73e268e7fedd3fdc88db45` |
+| Lottery pools, weekly / monthly (clones) | `0xbe007BDFaE905c7383a8912DdA3643c918D68B08` / `0xEb1a9e60Eb410971799FbF125140d3eB88Ed3465` |
+| RandomnessManagerV2 | `0xfc58d853950e427c76e7a17462da0c3ae3f0c556` |
+| ProbabilityVaultFactory | `0xD093Ea9c89dd08434Cd29B6F30434F90e8c9BCa6` |
+| ProbabilityVaultV2 (clone implementation) | `0x5Eb5181838e8D4E972E66a8a3e78E4E601aDcf97` |
 | PVAutoYieldAdapter | `0xAAA44960432981d6F41FAf7356a0c383F9232913` |
 | PolymarketRelayResolver | `0xaf461283b155cac6b0c1bf4622f3faf97c2336cd` |
 | AffiliateDistributor | `0x64a9b36EF2d0b7136e4807CF24f037B20138E78c` |
-| NoLossLotteryFactory | `0xe5f04a474aa83acb81ec34a06ce127dc0afde036` |
-| NoLossLotteryV3 (clone implementation) | `0xFb851299841B48f56696923C3765c51A834f4CF8` |
-| Lottery pools: weekly / monthly (clones) | `0xD3049097FB5653129abD83D6c890F3e2Cea45be7` / `0x8Caa6D5082Ed0694d69dcb9aE60D4DE43D164ad4` |
-| RandomnessManagerV2 | `0x9c420dd94f30ebd1c62ecb946120274cdaea40d2` |
+
+An earlier lottery stack (weekly `0xD304…5be7`, RandomnessManager `0x9c42…40d2`, factory `0xe5f0…e036`)
+and an earlier prediction-market factory (`0xB2af…2b7a`) still exist on-chain but are **superseded**;
+the app no longer uses them.
 
 ## Deployed code vs. `main`
 
-`main` is the development branch and is **ahead of what is deployed** for some contracts. Do not assume
-`main` equals mainnet. State as of 2026-10-29:
+State as of 2026-10-30. Every contract in the table above is **source-verified on Basescan**.
 
-| Contract | Status |
+| Contract | `main` vs. mainnet |
 |---|---|
-| AutoYieldVault, YieldOptimizer (proxy + impl), Timelock, Guardian, ContestFactoryV2, ProbabilityVaultFactory, PVAutoYieldAdapter, PolymarketRelayResolver, AffiliateDistributor, YieldVault, ContestV2 impl | Source **verified on Basescan** — that source is authoritative for what is live |
-| NoLossLotteryV3 impl (and thus the weekly/monthly clones) | Runtime bytecode matches this source as of the 2026-05-07 revision; **not yet verified on Basescan** |
-| RandomnessManagerV2, NoLossLotteryFactory | Same length and structure as the 2026-05-07 revision; differences are constructor immutables. **Not yet verified on Basescan** |
+| NoLossLotteryV3, RandomnessManagerV2, NoLossLotteryFactory, ProbabilityVaultV2, ProbabilityVaultFactory | Runtime bytecode identical to `main` (differences only in constructor-immutable slots) |
+| AutoYieldVault, YieldOptimizer, Timelock, Guardian, PVAutoYieldAdapter, PolymarketRelayResolver, AffiliateDistributor | Verified on Basescan; the Basescan source is authoritative |
+| `ContestFactoryV2`, `ContestV2`, `YieldVault` | **`main` is ahead of mainnet** — it contains the pause-architecture change that is not deployed yet. Use the Basescan source for what is live |
 
-Files on `main` with changes that are **not deployed yet** (compare against the Basescan source):
-`ContestFactoryV2`, `ContestV2` (pause architecture), `ProbabilityVaultFactory`, `ProbabilityVaultV2`,
-`YieldVault`, `RandomnessManager(V2)` and `lottery/NoLossLotteryV3` (hardened redeploy). They will go
-live through a new deployment behind the 48h Timelock.
+The pause-architecture change will go live through a new deployment behind the 48h Timelock.
 
 To check any address yourself, compare its runtime code with the compiled output:
 
