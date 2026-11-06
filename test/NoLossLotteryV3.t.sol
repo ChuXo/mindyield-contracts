@@ -553,6 +553,55 @@ contract NoLossLotteryV3Test is Test {
         }
     }
 
+    // Regression (KupiaSec report, 2026-11-02): fees are skimmed from a prize that was
+    // ALREADY withdrawn from the strategy, so they sit in the lottery contract, not in
+    // Aave. _harvestPrize() must not treat them as owed by the strategy, or every later
+    // round leaves (sum of unwithdrawn fees) of yield stranded in the strategy.
+    function test_protocolFee_unwithdrawnFeesDoNotWithholdLaterYield() public {
+        _deposit(alice, DEPOSIT_AMOUNT);
+
+        for (uint256 i = 0; i < 10; i++) {
+            aavePool.simulateYield(address(strategy), 1_000e6);
+            _advanceAndSettle(42 + i);
+            // Strategy must hold exactly principal after each harvest (no stranded yield).
+            assertApproxEqAbs(
+                strategy.getTotalValue(),
+                lottery.totalDebt() + lottery.yieldBuffer(),
+                10, // dust only
+                "yield stranded in strategy by unwithdrawn fees"
+            );
+        }
+        // Every round paid ~98% of its own yield, never less.
+        for (uint256 r = 1; r <= 10; r++) {
+            assertApproxEqAbs(lottery.getRound(r).totalPrize, 980e6, 1e6, "round prize shrank");
+        }
+    }
+
+    function test_protocolFee_prizePoolViewIgnoresUnwithdrawnFees() public {
+        _deposit(alice, DEPOSIT_AMOUNT);
+        aavePool.simulateYield(address(strategy), 1_000e6);
+        _advanceAndSettle(7);
+        assertGt(lottery.accumulatedProtocolFees(), 0);
+
+        aavePool.simulateYield(address(strategy), 1_000e6);
+        // The view must quote what the next harvest will actually take: the full 1,000.
+        assertApproxEqAbs(lottery.getCurrentPrizePool(), 1_000e6, 1e6, "view understates pool");
+    }
+
+    function test_protocolFee_voidedRoundRefundsFullYieldAfterUnwithdrawnFees() public {
+        _deposit(alice, DEPOSIT_AMOUNT);
+        aavePool.simulateYield(address(strategy), 1_000e6);
+        _advanceAndSettle(7);               // leaves ~20 unwithdrawn fee in the contract
+
+        aavePool.simulateYield(address(strategy), 1_000e6);
+        vm.warp(block.timestamp + ROUND_DURATION + 1);
+        lottery.performUpkeep("");
+        vm.warp(block.timestamp + 3 hours + 1);
+        lottery.cancelDraw();
+
+        assertApproxEqAbs(lottery.roundYieldRefund(2), 980e6, 1e6, "voided refund shrank");
+    }
+
     function test_protocolFee_tooHighReverts() public {
         vm.expectRevert(NoLossLotteryV3.FeeTooHigh.selector);
         lottery.setProtocolFee(1001);

@@ -811,7 +811,12 @@ contract NoLossLotteryV3 is Initializable, TwabController, Ownable2Step, Reentra
 
     function getCurrentPrizePool() external view returns (uint256) {
         uint256 currentValue = aaveStrategy.getTotalValue();
-        uint256 totalOwed = totalDebt + yieldBuffer + accumulatedProtocolFees;
+        // accumulatedProtocolFees is deliberately NOT part of what the strategy owes:
+        // fees are skimmed from a prize already withdrawn from the strategy, so the fee
+        // USDC sits in THIS contract (withdrawProtocolFees pays from its balance).
+        // Counting them here would strand sum(unwithdrawn fees) of yield in Aave and
+        // shift it to whichever round settles after the next fee withdrawal.
+        uint256 totalOwed = totalDebt + yieldBuffer;
         if (currentValue <= totalOwed) return 0;
         return currentValue - totalOwed;
     }
@@ -1272,7 +1277,12 @@ contract NoLossLotteryV3 is Initializable, TwabController, Ownable2Step, Reentra
 
     function _harvestPrize() internal returns (uint256 prize) {
         uint256 currentValue = aaveStrategy.getTotalValue();
-        uint256 totalOwed = totalDebt + yieldBuffer + accumulatedProtocolFees;
+        // accumulatedProtocolFees is deliberately NOT part of what the strategy owes:
+        // fees are skimmed from a prize already withdrawn from the strategy, so the fee
+        // USDC sits in THIS contract (withdrawProtocolFees pays from its balance).
+        // Counting them here would strand sum(unwithdrawn fees) of yield in Aave and
+        // shift it to whichever round settles after the next fee withdrawal.
+        uint256 totalOwed = totalDebt + yieldBuffer;
         if (currentValue <= totalOwed) return 0;
 
         prize = currentValue - totalOwed;

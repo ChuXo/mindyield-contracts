@@ -12,6 +12,13 @@ Please report privately via GitHub's **"Report a vulnerability"** (Security → 
 Do not open public issues for security bugs or test against mainnet funds you don't own.
 We aim to acknowledge within 72 hours.
 
+## Known issues (fixed in source, not yet in deployed clones)
+
+- **Lottery fee accounting (low, 2026-11):** `NoLossLotteryV2/V3._harvestPrize` treated unwithdrawn protocol fees as
+  owed by the Aave strategy, so a fee-sized amount of yield was held back each round until `withdrawProtocolFees()`
+  was called. No funds are lost. Fixed on `main`; live clones are immutable, so the owner withdraws fees before each
+  settle until the next lottery deployment. Details: `docs/internal-audits/2026-11-LOTTERY_FEE_ACCOUNTING.md`.
+
 ## Trust model (summary)
 
 - Privileged setters on the live AutoYieldVault sit behind a 48h `TimelockController`.

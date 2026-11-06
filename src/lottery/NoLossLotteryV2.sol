@@ -452,7 +452,7 @@ contract NoLossLotteryV2 is TwabController, Ownable2Step, ReentrancyGuard, Pausa
 
     function getCurrentPrizePool() external view returns (uint256) {
         uint256 currentValue = aaveStrategy.getTotalValue();
-        uint256 totalOwed = totalDebt + yieldBuffer + accumulatedProtocolFees;
+        uint256 totalOwed = totalDebt + yieldBuffer; // fees live in this contract, not the strategy
         if (currentValue <= totalOwed) return 0;
         return currentValue - totalOwed;
     }
@@ -680,8 +680,11 @@ contract NoLossLotteryV2 is TwabController, Ownable2Step, ReentrancyGuard, Pausa
 
     function _harvestPrize() internal returns (uint256 prize) {
         uint256 currentValue = aaveStrategy.getTotalValue();
-        // Total owed = depositor debt + yield buffer + accumulated protocol fees
-        uint256 totalOwed = totalDebt + yieldBuffer + accumulatedProtocolFees;
+        // Total owed BY THE STRATEGY = depositor debt + yield buffer. Protocol fees are
+        // skimmed from an already-withdrawn prize and sit in this contract, so they are
+        // not owed by the strategy (counting them strands yield in Aave; see
+        // docs/internal-audits/2026-11-LOTTERY_FEE_ACCOUNTING.md).
+        uint256 totalOwed = totalDebt + yieldBuffer;
         if (currentValue <= totalOwed) return 0;
 
         prize = currentValue - totalOwed;
